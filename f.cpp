@@ -389,7 +389,7 @@ void get_block(double *a, int n, int m, int p, int k, int i, int j, double *c, i
     int r = 0, t = 0;
     int kk = n / m;
     int l = n - kk * m;
-    int i_glob = l2g(n, m, p, k, i), j_glob = j;
+    int i_glob = l2g_b(n, m, p, k, i), j_glob = j;
     v = (i_glob < kk ? m : l);
     h = (j_glob < kk ? m : l);
     // double *pa = a + i * n * m + j * m;
@@ -428,15 +428,182 @@ void print_matrix_local(double *c, int v, int h, int k, int main_k = 0)
             printf("\n");
     }
 }
+
+double matrix_norm(double *a, int n, int m, int p, int k, MPI_Comm com)
+{
+    int i, j;
+    double max = -1, sum = 0;
+    int rows = get_rows(n, m, p, k);
+    for (i = 0; i < rows; i++)
+    {
+        sum = 0;
+        for (j = 0; j < n; j++)
+        {
+            sum += fabs(a[i * n + j]);
+        }
+        if (max < sum)
+        {
+            max = sum;
+        }
+    }
+    double max_glob;
+    MPI_Allreduce(&max, &max_glob, 1, MPI_DOUBLE, MPI_MAX, com);
+    return max_glob;
+}
+
+double matrix_norm_local(double *c, int v)
+{
+    int i, j;
+    double max = -1, sum = 0;
+    for (i = 0; i < v; i++)
+    {
+        sum = 0;
+        for (j = 0; j < v; j++)
+        {
+            sum += fabs(c[i * v + j]);
+        }
+        if (max < sum)
+        {
+            max = sum;
+        }
+    }
+    return max;
+}
+
+bool inverse(double *a, int n, double *c, double nrm_a)
+{
+    // const double nrm = norm(a, n);
+    const double nrm = nrm_a;
+    const double eps = EPS * nrm;
+    double max, d;
+    int i, j, k;
+    int max_i;
+    for (i = 0; i < n; ++i)
+    {
+        for (j = 0; j < n; ++j)
+        {
+            c[i * n + j] = (i == j) ? 1 : 0;
+        }
+    }
+
+    for (i = 0; i < n; ++i)
+    {
+        max = fabs(a[i * n + i]);
+        max_i = i;
+        for (int k = i + 1; k < n; ++k)
+        {
+            if (fabs(a[k * n + i]) > max)
+            {
+                max = fabs(a[k * n + i]);
+                max_i = k;
+            }
+        }
+
+        if (fabs(a[max_i * n + i]) < eps)
+        {
+            return false;
+        }
+
+        if (max_i != i)
+        {
+            for (j = 0; j < n; ++j)
+            {
+                SWAP(a[i * n + j], a[max_i * n + j]);
+                SWAP(c[i * n + j], c[max_i * n + j]);
+            }
+        }
+
+        d = a[i * n + i];
+        for (j = 0; j < n; ++j)
+        {
+            a[i * n + j] /= d;
+            c[i * n + j] /= d;
+        }
+
+        for (k = 0; k < n; ++k)
+        {
+            if (k != i)
+            {
+                d = a[k * n + i];
+                for (j = 0; j < n; ++j)
+                {
+                    a[k * n + j] -= d * a[i * n + j];
+                    c[k * n + j] -= d * c[i * n + j];
+                }
+            }
+        }
+    }
+    return true;
+}
+
 void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, MPI_Comm com)
 {
-    int b_rows = get_block_rows(n, m, p, k);
-    double *c = new double[m * m];
+    int b_rows = get_block_rows(n, m, p, k), b_columns = (n + m - 1) / m;
+    double *c = new double[m * m], *c_inv = new double[m * m];
+    int i, j;
     int v, h;
-    get_block(a, n, m, p, k, 0, 0, c, v, h);
-    print_matrix_local(c, v, h, k);
-    get_block(a, n, m, p, k, 1, 0, c, v, h);
-    print_matrix_local(c, v, h, k);
+    double norm_a = matrix_norm(a, n, m, p, k, com);
+
+    // ищем квадратный блок с минимальной нормой обратной матрицы
+    // границы для обхода по квадратным блокам
+    double min_norm = 0, min_norm_glob, norm;
+    int b_rows_m = (l2g_b(n, m, p, k, b_rows - 1) == n / m ? b_rows - 1 : b_rows);
+    int b_columns_m = n / m;
+    bool flag = true;
+    int res_i, res_j;
+    for (i = 0; i < b_rows_m; i++)
+    {
+        for (j = 0; j < b_columns_m; j++)
+        {
+            get_block(a, n, m, p, k, i, j, c, v, h); // v = h
+            // print_matrix_local(c, v, h, k);
+            // if (k == 0)
+            //     printf("\n");
+            if (inverse(c, m, c_inv, norm_a))
+            {
+                // print_matrix_local(c_inv, v, h, k);
+                norm = matrix_norm_local(c_inv, v);
+                // printf("k = %d, norm = %lf\n", k, norm);
+                if (flag)
+                {
+                    flag = false;
+                    min_norm = norm;
+                    res_i = i;
+                    res_j = j;
+                }
+                else if (min_norm > norm)
+                {
+                    min_norm = norm;
+                    res_i = i;
+                    res_j = j;
+                }
+            }
+        }
+    }
+    // printf("Process: %d, min_norm = %lf, res_i = %d, res_j = %d\n", k, min_norm, res_i, res_j);
+    //  находим глобальный минимум
+    struct
+    {
+        double norm_inv; // обратная норма
+        int res;         // i * n + j
+    } local_pair, global_pair;
+    if (flag) // все блоки вырождены
+    {
+        local_pair.norm_inv = -1;
+        local_pair.res = -1;
+    }
+    else
+    {
+        local_pair.norm_inv = 1 / min_norm;
+        local_pair.res = res_i * n + res_j;
+    }
+    MPI_Allreduce(&local_pair, &global_pair, 1, MPI_DOUBLE_INT, MPI_MAXLOC, com);
+    printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, global_pair.res / n, global_pair.res % n);
+    if (global_pair.res == -1) // во всей матрице нет обратимых блоков
+    {
+        return;
+    }
 
     delete[] c;
+    delete[] c_inv;
 }
