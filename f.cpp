@@ -536,6 +536,83 @@ bool inverse(double *a, int n, double *c, double nrm_a)
     return true;
 }
 
+void multy(double *a, double *b, int n, int p, int m, double *c)
+{
+    int i, j, k;
+    double s, s00, s01, s02, s10, s11, s12, s20, s21, s22, a0, a1, a2, b0, b1, b2;
+
+    int n3 = n - n % 3;
+    int m3 = m - m % 3;
+
+    for (i = 0; i < n3; i += 3)
+    {
+        for (j = 0; j < m3; j += 3)
+        {
+            s00 = s01 = s02 = s10 = s11 = s12 = s20 = s21 = s22 = 0;
+
+            for (k = 0; k < p; k++)
+            {
+                a0 = a[i * p + k];
+                a1 = a[(i + 1) * p + k];
+                a2 = a[(i + 2) * p + k];
+
+                b0 = b[k * m + j];
+                b1 = b[k * m + j + 1];
+                b2 = b[k * m + j + 2];
+
+                s00 += a0 * b0;
+                s01 += a0 * b1;
+                s02 += a0 * b2;
+
+                s10 += a1 * b0;
+                s11 += a1 * b1;
+                s12 += a1 * b2;
+
+                s20 += a2 * b0;
+                s21 += a2 * b1;
+                s22 += a2 * b2;
+            }
+            c[i * m + j] = s00;
+            c[i * m + j + 1] = s01;
+            c[i * m + j + 2] = s02;
+
+            c[(i + 1) * m + j] = s10;
+            c[(i + 1) * m + j + 1] = s11;
+            c[(i + 1) * m + j + 2] = s12;
+
+            c[(i + 2) * m + j] = s20;
+            c[(i + 2) * m + j + 1] = s21;
+            c[(i + 2) * m + j + 2] = s22;
+        }
+
+        for (; j < m; j++)
+        {
+            s00 = s10 = s20 = 0;
+            for (k = 0; k < p; k++)
+            {
+                s00 += a[i * p + k] * b[k * m + j];
+                s10 += a[(i + 1) * p + k] * b[k * m + j];
+                s20 += a[(i + 2) * p + k] * b[k * m + j];
+            }
+            c[i * m + j] = s00;
+            c[(i + 1) * m + j] = s10;
+            c[(i + 2) * m + j] = s20;
+        }
+    }
+    for (; i < n; i++)
+    {
+        for (j = 0; j < m; j++)
+        {
+            s = 0;
+            for (k = 0; k < p; k++)
+            {
+                s += a[i * p + k] * b[k * m + j];
+            }
+            c[i * m + j] = s;
+        }
+    }
+}
+
 void swap_rows(double *a, int n, int m, int p, int k, double *b, int s, int i0)
 {
     int i, j;
@@ -575,7 +652,7 @@ void swap_columns(double *a, int n, int m, int p, int k, int s, int j0)
 void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com)
 {
     int b_rows = get_block_rows(n, m, p, k), b_columns = (n + m - 1) / m;
-    double *c = new double[m * m], *c_inv = new double[m * m];
+    double *c = new double[m * m], *c_inv = new double[m * m], *d = new double[m * m];
     int i, j;
     int v, h;
     double norm_a = matrix_norm(a, n, m, p, k, com);
@@ -586,7 +663,7 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
     bool flag = true;
     int res_i, res_j;
     int start;
-    for (int s = 0; s < 2; s++)
+    for (int s = 0; s < 1; s++)
     {
         // ---------------------------------- №1 ----------------------------------
         // ищем квадратный блок с минимальной нормой обратной матрицы
@@ -598,13 +675,13 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         {
             for (j = s; j < b_columns_m; j++)
             {
-                get_block(a, n, m, p, k, i, j, c, v, h); // v = h
+                get_block(a, n, m, p, k, i, j, c, v, h); // v = h = m
                 // print_matrix_local(c, v, h, k);
                 // if (k == 0)
                 //     printf("\n");
                 if (inverse(c, m, c_inv, norm_a))
                 {
-                    print_matrix_local(c_inv, v, h, k);
+                    // print_matrix_local(c_inv, v, h, k);
                     norm = matrix_norm_local(c_inv, v);
                     // printf("k = %d, norm = %lf\n", k, norm);
                     if (flag)
@@ -653,7 +730,7 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
 
         // printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, res_i, res_j);
 
-        // ---------- №2 ----------
+        // ---------------------------------- №2 ----------------------------------
         // переставляем строки и столбцы
         int owner = res_i_glob % p;
         int sk = s % p;
@@ -684,14 +761,53 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         }
         // printf("res_j = %d\n", res_j);
         swap_columns(a, n, m, p, k, s, res_j);
-
         if (k == 0)
             printf("\n");
         print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
         if (k == 0)
             printf("\n");
         print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+        if (k == 0)
+            printf("\n");
+
+        // ---------------------------------- №3 ----------------------------------
+        // домножение строки на обратную
+        if (k == sk)
+        {
+            memcpy(buf, a + s_loc * n * m, n * m * sizeof(double));
+        }
+        MPI_Bcast(buf, n * m, MPI_DOUBLE, sk, com);
+
+        int len = b_columns / p;
+        int end = (k != p - 1 ? (k + 1) * len : b_columns);
+        int w;
+        get_block(buf, n, m, p, k, 0, 0, c, v, h); // v = h = m
+        inverse(c, m, c_inv, norm_a);
+        for (j = k * len; j < end; j++)
+        {
+            get_block(buf, n, m, p, k, 0, j, c, h, w);
+            multy(c_inv, c, v, h, w, d);
+            set_block(buf, n, m, 0, j, d, h, w);
+        }
+        // Обнуляем все то, что не трогал данный процесс
+        for (i = 0; i < m; i++)
+        {
+            for (j = 0; j < k * len * m; j++)
+            {
+                buf[i * n + j] = 0;
+            }
+        }
+        for (i = 0; i < m; i++)
+        {
+            for (j = end * m; j < n; j++)
+            {
+                buf[i * n + j] = 0;
+            }
+        }
+        MPI_Allreduce(MPI_IN_PLACE, buf, n * m, MPI_DOUBLE, MPI_SUM, com);
+        print_matrix_local(buf, m, n, k);
     }
     delete[] c;
     delete[] c_inv;
+    delete[] d;
 }
