@@ -79,7 +79,7 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
     double *x = new double[max_b_rows * m];
 
     t2 = clock();
-    gaussian_method(a, b, x, n, m, p, k, com);
+    gaussian_method(a, b, x, n, m, p, k, buf, com);
     t2 = (clock() - t2) / CLOCKS_PER_SEC;
 
     t2 = clock();

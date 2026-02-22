@@ -413,18 +413,18 @@ void set_block(double *a, int n, int m, int i, int j, double *c, int v, int h)
     }
 }
 
-void print_matrix_local(double *c, int v, int h, int k, int main_k = 0)
+void print_matrix_local(double *c, int v, int h, int k)
 {
     for (int i = 0; i < v; i++)
     {
         for (int j = 0; j < h; j++)
         {
-            if (k == main_k)
+            if (k == 0)
             {
                 printf(" %10.3e", c[i * h + j]);
             }
         }
-        if (k == main_k)
+        if (k == 0)
             printf("\n");
     }
 }
@@ -536,7 +536,43 @@ bool inverse(double *a, int n, double *c, double nrm_a)
     return true;
 }
 
-void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, MPI_Comm com)
+void swap_rows(double *a, int n, int m, int p, int k, double *b, int s, int i0)
+{
+    int i, j;
+    int s_loc = g2l_b(n, m, p, k, s);
+    if (i0 != s_loc)
+    {
+        for (i = 0; i < m; i++)
+        {
+            for (j = 0; j < n - s * m; j++)
+            {
+                SWAP(a[n * (m * i0 + i) + m * s_loc + j],
+                     a[n * (m * s_loc + i) + m * s_loc + j]);
+            }
+            SWAP(b[m * s_loc + i], b[m * i0 + i]);
+        }
+    }
+}
+
+void swap_columns(double *a, int n, int m, int p, int k, int s, int j0)
+{
+    int i, j;
+    int rows = get_rows(n, m, p, k);
+    int s_loc = g2l_b(n, m, p, k, s);
+    if (j0 != s)
+    {
+        for (j = 0; j < m; j++)
+        {
+            for (i = 0; i < rows; i++)
+            {
+                SWAP(a[m * j0 + n * i + j],
+                     a[m * s_loc + n * i + j]);
+            }
+        }
+    }
+}
+
+void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com)
 {
     int b_rows = get_block_rows(n, m, p, k), b_columns = (n + m - 1) / m;
     double *c = new double[m * m], *c_inv = new double[m * m];
@@ -544,66 +580,118 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
     int v, h;
     double norm_a = matrix_norm(a, n, m, p, k, com);
 
-    // ищем квадратный блок с минимальной нормой обратной матрицы
-    // границы для обхода по квадратным блокам
     double min_norm = 0, min_norm_glob, norm;
     int b_rows_m = (l2g_b(n, m, p, k, b_rows - 1) == n / m ? b_rows - 1 : b_rows);
     int b_columns_m = n / m;
     bool flag = true;
     int res_i, res_j;
-    for (i = 0; i < b_rows_m; i++)
+    int start;
+    for (int s = 0; s < 2; s++)
     {
-        for (j = 0; j < b_columns_m; j++)
+        // ---------------------------------- №1 ----------------------------------
+        // ищем квадратный блок с минимальной нормой обратной матрицы
+        // границы для обхода по квадратным блокам
+        start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
+        // printf("k = %d, start = %d\n", k, start);
+        flag = true;
+        for (i = start; i < b_rows_m; i++)
         {
-            get_block(a, n, m, p, k, i, j, c, v, h); // v = h
-            // print_matrix_local(c, v, h, k);
-            // if (k == 0)
-            //     printf("\n");
-            if (inverse(c, m, c_inv, norm_a))
+            for (j = s; j < b_columns_m; j++)
             {
-                // print_matrix_local(c_inv, v, h, k);
-                norm = matrix_norm_local(c_inv, v);
-                // printf("k = %d, norm = %lf\n", k, norm);
-                if (flag)
+                get_block(a, n, m, p, k, i, j, c, v, h); // v = h
+                // print_matrix_local(c, v, h, k);
+                // if (k == 0)
+                //     printf("\n");
+                if (inverse(c, m, c_inv, norm_a))
                 {
-                    flag = false;
-                    min_norm = norm;
-                    res_i = i;
-                    res_j = j;
-                }
-                else if (min_norm > norm)
-                {
-                    min_norm = norm;
-                    res_i = i;
-                    res_j = j;
+                    print_matrix_local(c_inv, v, h, k);
+                    norm = matrix_norm_local(c_inv, v);
+                    // printf("k = %d, norm = %lf\n", k, norm);
+                    if (flag)
+                    {
+                        flag = false;
+                        min_norm = norm;
+                        res_i = i;
+                        res_j = j;
+                    }
+                    else if (min_norm > norm)
+                    {
+                        min_norm = norm;
+                        res_i = i;
+                        res_j = j;
+                    }
                 }
             }
         }
-    }
-    // printf("Process: %d, min_norm = %lf, res_i = %d, res_j = %d\n", k, min_norm, res_i, res_j);
-    //  находим глобальный минимум
-    struct
-    {
-        double norm_inv; // обратная норма
-        int res;         // i * n + j
-    } local_pair, global_pair;
-    if (flag) // все блоки вырождены
-    {
-        local_pair.norm_inv = -1;
-        local_pair.res = -1;
-    }
-    else
-    {
-        local_pair.norm_inv = 1 / min_norm;
-        local_pair.res = res_i * n + res_j;
-    }
-    MPI_Allreduce(&local_pair, &global_pair, 1, MPI_DOUBLE_INT, MPI_MAXLOC, com);
-    printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, global_pair.res / n, global_pair.res % n);
-    if (global_pair.res == -1) // во всей матрице нет обратимых блоков
-    {
-        return;
-    }
+        // printf("Process: %d, min_norm = %lf, res_i = %d, res_j = %d\n", k, min_norm, res_i, res_j);
+        //  находим глобальный минимум
+        struct
+        {
+            double norm_inv; // обратная норма
+            int res;         // i * n + j
+        } local_pair, global_pair;
+        if (flag) // все блоки вырождены
+        {
+            local_pair.norm_inv = -1;
+            local_pair.res = -1;
+        }
+        else
+        {
+            local_pair.norm_inv = 1 / min_norm;
+            local_pair.res = l2g_b(n, m, p, k, res_i) * b_columns + res_j;
+        }
+        MPI_Allreduce(&local_pair, &global_pair, 1, MPI_DOUBLE_INT, MPI_MAXLOC, com);
+        if (global_pair.res == -1) // во всей матрице нет обратимых блоков
+        {
+            if (k == 0)
+                printf("This method is not applicable with the given parameters\n");
+            return;
+        }
+        int res_i_glob = global_pair.res / b_columns, res_j_glob = global_pair.res % b_columns;
+        res_i = g2l_b(n, m, p, k, res_i_glob);
+        res_j = res_j_glob;
 
+        // printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, res_i, res_j);
+
+        // ---------- №2 ----------
+        // переставляем строки и столбцы
+        int owner = res_i_glob % p;
+        int sk = s % p;
+        int s_loc = g2l_b(n, m, p, k, s);
+        if (owner == sk)
+        {
+            if (k == sk)
+            {
+                swap_rows(a, n, m, p, k, b, s, res_i);
+            }
+        }
+        else
+        {
+            MPI_Status st;
+            if (k == sk)
+            {
+                // memcpy(buf, a + 0 * n * m, n * m * sizeof(double));
+                MPI_Sendrecv_replace(a + s_loc * n * m, n * m, MPI_DOUBLE, owner, 0, owner, 0, com, &st);
+                MPI_Sendrecv_replace(b + s_loc * m, m, MPI_DOUBLE, owner, 0, owner, 0, com, &st);
+            }
+            else if (k == owner)
+            {
+                // memcpy(buf, a + res_i * n * m, n * m * sizeof(double));
+                MPI_Sendrecv_replace(a + res_i * n * m, n * m, MPI_DOUBLE, sk, 0, sk, 0, com, &st);
+                MPI_Sendrecv_replace(b + res_i * m, m, MPI_DOUBLE, sk, 0, sk, 0, com, &st);
+            }
+            // print_matrix_local(buf, m, n, k);
+        }
+        // printf("res_j = %d\n", res_j);
+        swap_columns(a, n, m, p, k, s, res_j);
+
+        if (k == 0)
+            printf("\n");
+        print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
+        if (k == 0)
+            printf("\n");
+        print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    }
     delete[] c;
     delete[] c_inv;
 }
