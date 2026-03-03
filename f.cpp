@@ -351,6 +351,21 @@ double l1_norm(double *x, int n, int m, int p, int k, MPI_Comm com)
     return sum_glob;
 }
 
+double l2_norm_matrix(double *a, int n, int m, int p, int k, MPI_Comm com)
+{
+    double sum = 0, sum_glob;
+    int rows = get_rows(n, m, p, k);
+    for (int i = 0; i < rows; i++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            sum += a[i * n + j] * a[i * n + j];
+        }
+    }
+    MPI_Allreduce(&sum, &sum_glob, 1, MPI_DOUBLE, MPI_SUM, com);
+
+    return sqrt(sum_glob);
+}
 double get_r1(double *a, double *x, double *b, double *buf, int n, int m, int p, int k, MPI_Comm com)
 {
     matrix_mult_vector(a, x, buf, n, m, p, k, com);
@@ -402,6 +417,24 @@ void get_block(double *a, int n, int m, int p, int k, int i, int j, double *c, i
     }
 }
 
+void get_block_buf(double *a, int n, int m, int p, int k, int s_loc, int j, double *c, int &v, int &h)
+{
+    int r = 0, t = 0;
+    int kk = n / m;
+    int l = n - kk * m;
+    int i_glob = l2g_b(n, m, p, k, s_loc), j_glob = j;
+    v = (i_glob < kk ? m : l);
+    h = (j_glob < kk ? m : l);
+    // double *pa = a + i * n * m + j * m;
+    int i = 0;
+    for (r = 0; r < v; r++)
+    {
+        for (t = 0; t < h; t++)
+        {
+            c[r * h + t] = a[(i * m + r) * n + j * m + t];
+        }
+    }
+}
 void set_block(double *a, int n, int m, int i, int j, double *c, int v, int h)
 {
     for (int r = 0; r < v; r++)
@@ -413,18 +446,35 @@ void set_block(double *a, int n, int m, int i, int j, double *c, int v, int h)
     }
 }
 
-void print_matrix_local(double *c, int v, int h, int k)
+void get_block_vector(double *b, int n, int m, int p, int k, int i, double *c, int &h)
+{
+    int i_glob = l2g_b(n, m, p, k, i);
+    h = (i_glob < n / m ? m : n % m);
+    for (int r = 0; r < h; r++)
+    {
+        c[r] = b[m * i + r];
+    }
+}
+void set_block_vector(double *b, int m, int i, double *c, int h)
+{
+    for (int r = 0; r < h; r++)
+    {
+        b[m * i + r] = c[r];
+    }
+}
+
+void print_matrix_local(double *c, int v, int h, int k, int main_k = 0)
 {
     for (int i = 0; i < v; i++)
     {
         for (int j = 0; j < h; j++)
         {
-            if (k == 0)
+            if (k == main_k)
             {
                 printf(" %10.3e", c[i * h + j]);
             }
         }
-        if (k == 0)
+        if (k == main_k)
             printf("\n");
     }
 }
@@ -613,6 +663,21 @@ void multy(double *a, double *b, int n, int p, int m, double *c)
     }
 }
 
+void multy_vector(double *g, double *c, int v, int h, double *d)
+{
+    int i, j;
+    double s;
+    for (i = 0; i < v; i++)
+    {
+        s = 0;
+        for (j = 0; j < h; j++)
+        {
+            s += g[i * h + j] * c[j];
+        }
+        d[i] = s;
+    }
+}
+
 void swap_rows(double *a, int n, int m, int p, int k, double *b, int s, int i0)
 {
     int i, j;
@@ -643,18 +708,33 @@ void swap_columns(double *a, int n, int m, int p, int k, int s, int j0)
             for (i = 0; i < rows; i++)
             {
                 SWAP(a[m * j0 + n * i + j],
-                     a[m * s_loc + n * i + j]);
+                     a[m * s + n * i + j]);
             }
         }
     }
 }
 
+void sub(double *a, double *b, int n, int m, double *c)
+{
+    int i, j;
+    for (i = 0; i < n; i++)
+    {
+        for (j = 0; j < m; j++)
+        {
+            c[i * m + j] = a[i * m + j] - b[i * m + j];
+        }
+    }
+}
 void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com)
 {
     int b_rows = get_block_rows(n, m, p, k), b_columns = (n + m - 1) / m;
-    double *c = new double[m * m], *c_inv = new double[m * m], *d = new double[m * m];
+    double *c = new double[m * m], *c_inv = new double[m * m], *d = new double[m * m], *e = new double[m * m], *f = new double[m * m],
+           *buf_block_b = new double[m];
+    int *permutation;
+    int buf_block_b_size;
     int i, j;
     int v, h;
+    int s;
     double norm_a = matrix_norm(a, n, m, p, k, com);
 
     double min_norm = 0, min_norm_glob, norm;
@@ -663,13 +743,19 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
     bool flag = true;
     int res_i, res_j;
     int start;
-    for (int s = 0; s < 1; s++)
+
+    permutation = new int[b_columns + 1];
+    for (i = 0; i < b_columns + 1; i++)
+    {
+        permutation[i] = i;
+    }
+    for (s = 0; s < b_columns_m; s++)
     {
         // ---------------------------------- №1 ----------------------------------
         // ищем квадратный блок с минимальной нормой обратной матрицы
         // границы для обхода по квадратным блокам
         start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
-        // printf("k = %d, start = %d\n", k, start);
+        printf("k = %d, start = %d\n", k, start);
         flag = true;
         for (i = start; i < b_rows_m; i++)
         {
@@ -728,10 +814,11 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         res_i = g2l_b(n, m, p, k, res_i_glob);
         res_j = res_j_glob;
 
-        // printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, res_i, res_j);
-
-        // ---------------------------------- №2 ----------------------------------
-        // переставляем строки и столбцы
+        // if (k == 0)
+        // printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, res_i_glob, res_j_glob);
+        // printf("l2_norm(a) = %lf\n", l2_norm_matrix(a, n, m, p, k, com));
+        //  ---------------------------------- №2 ----------------------------------
+        //  переставляем строки и столбцы
         int owner = res_i_glob % p;
         int sk = s % p;
         int s_loc = g2l_b(n, m, p, k, s);
@@ -761,8 +848,11 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         }
         // printf("res_j = %d\n", res_j);
         swap_columns(a, n, m, p, k, s, res_j);
+
+        std::swap(permutation[s], permutation[res_j]);
+
         if (k == 0)
-            printf("\n");
+            printf("Matrix after selecting the main element %d %d, s = %d\n", res_i_glob, res_j_glob, s);
         print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
         if (k == 0)
             printf("\n");
@@ -770,8 +860,9 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         if (k == 0)
             printf("\n");
 
-        // ---------------------------------- №3 ----------------------------------
-        // домножение строки на обратную
+        // printf("l2_norm(a) = %lf\n", l2_norm_matrix(a, n, m, p, k, com));
+        //  ---------------------------------- №3 ----------------------------------
+        //  домножение строки на обратную
         if (k == sk)
         {
             memcpy(buf, a + s_loc * n * m, n * m * sizeof(double));
@@ -781,14 +872,34 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
         int len = b_columns / p;
         int end = (k != p - 1 ? (k + 1) * len : b_columns);
         int w;
-        get_block(buf, n, m, p, k, 0, 0, c, v, h); // v = h = m
+        get_block(buf, n, m, p, sk, 0, s, c, v, h); // v = h = m
+        if (k == 0)
+            printf("C:\n");
+        print_matrix_local(c, m, m, k);
         inverse(c, m, c_inv, norm_a);
+        if (k == 0)
+            printf("C_inv:\n");
+        print_matrix_local(c_inv, m, m, k);
         for (j = k * len; j < end; j++)
         {
-            get_block(buf, n, m, p, k, 0, j, c, h, w);
+            get_block_buf(buf, n, m, p, sk, s_loc, j, c, h, w);
+            // print_matrix_local(c, h, w, k, p - 1);
+            // printf("k = %d, v = %d,h = %d, w = %d\n", k, v, h, w);
             multy(c_inv, c, v, h, w, d);
-            set_block(buf, n, m, 0, j, d, h, w);
+            // print_matrix_local(d, v, w, k, p - 1);
+            set_block(buf, n, m, 0, j, d, v, w);
         }
+        if (k == sk)
+        {
+            get_block_vector(b, n, m, p, k, s_loc, c, h);
+            // print_matrix_local(c, 1, h, k);
+            multy_vector(c_inv, c, v, h, d);
+            set_block_vector(b, m, s_loc, d, v);
+            memcpy(buf_block_b, d, v * sizeof(double));
+            buf_block_b_size = v;
+        }
+        MPI_Bcast(buf_block_b, v, MPI_DOUBLE, sk, com);
+        MPI_Bcast(&buf_block_b_size, 1, MPI_INT, sk, com);
         // Обнуляем все то, что не трогал данный процесс
         for (i = 0; i < m; i++)
         {
@@ -805,9 +916,163 @@ void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k
             }
         }
         MPI_Allreduce(MPI_IN_PLACE, buf, n * m, MPI_DOUBLE, MPI_SUM, com);
-        print_matrix_local(buf, m, n, k);
+        if (k == sk)
+        {
+            memcpy(a + s_loc * n * m, buf, n * m * sizeof(double));
+        }
+        // printf("l2_norm(a) = %lf\n", l2_norm_matrix(a, n, m, p, k, com));
+
+        // if (k == 0)
+        //     printf("Matrix after row multiplication, s = %d\n", s);
+        // print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
+        // if (k == 0)
+        //     printf("\n");
+        // print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+        // if (k == 0)
+        //     printf("\n");
+        // ---------------------------------- №4 ----------------------------------
+        // преобразования строк
+        int cv, ch, dv, dh, ev, eh;
+        int begin = g2l_b(n, m, p, k, p * ((p + s - k) / p) + k);
+        if (k == 0)
+            printf("k = %d, begin = %d\n", k, begin);
+        print_matrix_local(buf_block_b, 1, buf_block_b_size, k);
+        for (i = begin; i < b_rows; i++)
+        {
+            get_block(a, n, m, p, k, i, s, c, cv, ch);
+            for (j = s; j < b_columns; j++)
+            {
+                get_block(a, n, m, p, k, i, j, d, dv, dh);
+                get_block_buf(buf, n, m, p, sk, s_loc, j, e, ev, eh);
+                multy(c, e, cv, ch, eh, f);
+                sub(d, f, cv, eh, d);
+                set_block(a, n, m, i, j, d, cv, eh);
+            }
+            get_block_vector(b, n, m, p, k, i, d, dv);
+            // if (k == 0)
+            //     printf("d:\n");
+            // print_matrix_local(d, 1, dv, k);
+            multy_vector(c, buf_block_b, cv, buf_block_b_size, f);
+            // if (k == 0)
+            //     printf("c:\n");
+            // print_matrix_local(c, cv, ch, k);
+            sub(d, f, 1, dv, d);
+            set_block_vector(b, m, i, d, dv);
+        }
+
+        if (k == 0)
+            printf("Matrix after row transformation, s = %d\n", s);
+        print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
+        if (k == 0)
+            printf("\n");
+        print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+        if (k == 0)
+            printf("\n");
     }
+    int sk = s % p;
+    int s_loc = g2l_b(n, m, p, k, s);
+    if (n % m != 0)
+    {
+        if (k == sk)
+        {
+            printf("b_rows = %d, s_loc = %d\n", b_rows, s_loc);
+            get_block(a, n, m, p, k, s_loc, s, c, v, h); // v = h = l
+            if (k == 0)
+                printf("C:\n");
+            print_matrix_local(c, v, h, k); // v = h
+            if (!inverse(c, v, c_inv, norm_a))
+            {
+                if (k == 0)
+                    printf("This method is not applicable with the given parameters\n");
+            }
+            // можно убрать
+            for (i = 0; i < v; i++)
+            {
+                for (j = 0; j < h; j++)
+                {
+                    e[i * h + j] = (i == j ? 1 : 0);
+                }
+            }
+            set_block(a, n, m, s_loc, s, e, v, h);
+
+            get_block_vector(b, n, m, p, k, s_loc, c, h);
+            // print_matrix_local(c, 1, h, k);
+            multy_vector(c_inv, c, v, h, d);
+            set_block_vector(b, m, s_loc, d, v);
+        }
+    }
+    if (k == 0)
+        printf("Matrix after main step, s = %d\n", s);
+    print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
+    if (k == 0)
+        printf("\n");
+    print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    if (k == 0)
+        printf("\n");
+
+    int cv, ch, dv, dh;
+    if (n % m != 0)
+    {
+        MPI_Bcast(d, m * m, MPI_DOUBLE, sk, com);
+        dv = v;
+    }
+    else
+    {
+        sk = (s - 1) % p;
+        MPI_Bcast(d, m * m, MPI_DOUBLE, sk, com);
+    }
+
+    for (s = 1; s < b_columns; s++)
+    {
+        start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
+        for (i = 0; i < b_rows - start; i++)
+        {
+            get_block(a, n, m, p, k, i, b_columns - s, c, cv, ch);
+            multy_vector(c, d, cv, ch, e);
+            get_block_vector(b, n, m, p, k, i, c, cv);
+            sub(c, e, 1, cv, c);
+            set_block_vector(b, m, i, c, cv);
+        }
+        MPI_Bcast(c, cv, MPI_DOUBLE, (b_columns - s - 1) % p, com);
+        memcpy(d, c, cv * sizeof(double));
+        print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    }
+    // for (i = 0; i < b_rows; i++)
+    // {
+    //     int i_glob = l2g_b(n, m, p, k, i);
+    //     // меняем i_glob c permutation[i_glob]
+    //     int pk = permutation[i_glob] % p;
+    //     int perm_loc = g2l_b(n, m, p, k, permutation[i_glob]);
+
+    //     if (k == pk)
+    //     {
+    //         swap_rows(a, n, m, p, k, b, i, perm_loc);
+    //     }
+    //     else
+    //     {
+    //         MPI_Status st;
+    //         MPI_Sendrecv_replace(b + i * m, m, MPI_DOUBLE, k, 0, k, 0, com, &st);
+    //         if (k == pk)
+    //         {
+    //             MPI_Sendrecv_replace(b + perm_loc * m, m, MPI_DOUBLE, pk, 0, pk, 0, com, &st);
+    //         }
+    //         // print_matrix_local(buf, m, n, k);
+    //     }
+    // }
+    if (k == 0)
+        printf("Matrix after all, s = %d\n", s);
+    print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
+    if (k == 0)
+        printf("\n");
+    print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    if (k == 0)
+        printf("\n");
+
+    memcpy(x, b, b_rows * m * sizeof(double));
     delete[] c;
     delete[] c_inv;
     delete[] d;
+    delete[] e;
+    delete[] f;
+    delete[] buf_block_b;
 }

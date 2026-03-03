@@ -81,9 +81,14 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
     t2 = clock();
     gaussian_method(a, b, x, n, m, p, k, buf, com);
     t2 = (clock() - t2) / CLOCKS_PER_SEC;
+    if (k == 0)
+        printf("Solution vector:\n");
+    print_vector(x, n, m, p, k, buf, r, com);
 
+    read_matrix(a, n, m, p, k, file_name, buf, com);
+    init_b(a, b, n, m, p, k);
     t2 = clock();
-    double r1 = get_r1(a, x_exact /* = x*/, b, buf, n, m, p, k, com), r2 = get_r2(x_exact /* = x*/, x_exact, n, m, p, k, com);
+    double r1 = get_r1(a, x, b, buf, n, m, p, k, com), r2 = get_r2(x, x_exact, n, m, p, k, com);
     t2 = (clock() - t2) / CLOCKS_PER_SEC;
 
     if (k == 0)
