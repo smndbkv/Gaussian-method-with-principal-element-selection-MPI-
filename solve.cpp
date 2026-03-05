@@ -78,9 +78,24 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
 
     double *x = new double[max_b_rows * m];
 
-    t2 = clock();
-    gaussian_method(a, b, x, n, m, p, k, buf, com);
-    t2 = (clock() - t2) / CLOCKS_PER_SEC;
+    t1 = clock();
+    int st = gaussian_method(a, b, x, n, m, p, k, buf, com);
+    t1 = (clock() - t1) / CLOCKS_PER_SEC;
+
+    if (!st)
+    {
+        if (k == 0)
+            printf("%s : Task = %d Res1 = %e Res2 = %e T1 = %.2f T2 = %.2f S = %d N = %d M = %d P = %d\n",
+                   argv[0], 11, -1., -1., t1, 0., s, n, m, p);
+
+        delete[] a;
+        delete[] buf;
+        delete[] b;
+        delete[] x_exact;
+        delete[] x;
+        return;
+    }
+
     if (k == 0)
         printf("Solution vector:\n");
     print_vector(x, n, m, p, k, buf, r, com);
@@ -99,4 +114,5 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
     delete[] buf;
     delete[] b;
     delete[] x_exact;
+    delete[] x;
 }

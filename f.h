@@ -35,5 +35,5 @@ bool inverse(double *a, int n, double *c, double nrm_a);
 void swap_rows(double *a, int n, int m, int p, int k, double *b, int s, int i0);
 void swap_columns(double *a, int n, int m, int p, int k, int s, int j0);
 
-void gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com);
+int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com);
 #endif
