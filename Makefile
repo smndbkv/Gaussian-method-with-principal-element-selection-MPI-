@@ -23,7 +23,7 @@ test: a.out
 	@echo "Running tests..."
 	@for file in $(TEST_FILES); do \
 		echo "Testing with $$file:"; \
-		./a.out $(N) $(M) $(P) $(R) 0 $$file; \
+		mpirun -np $(P) ./a.out $(N) $(M) $(R) 0 $$file; \
 		echo "---"; \
 	done
 

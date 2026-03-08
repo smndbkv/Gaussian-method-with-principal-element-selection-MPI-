@@ -760,9 +760,8 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
     {
         int sk = s % p;
         int s_loc = g2l_b(n, m, p, k, s);
-        /*
+
         // ---------------------------------- №1 ----------------------------------
-        // ищем квадратный блок с минимальной нормой обратной матрицы
         // границы для обхода по квадратным блокам
         start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
         // printf("k = %d, start = %d\n", k, start);
@@ -836,7 +835,6 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         // printf("Process: %d, global_min_norm = %lf, global_res_i = %d, global_res_j = %d\n", k, 1 / global_pair.norm_inv, res_i_glob, res_j_glob);
         // printf("l2_norm(a) = %lf\n", l2_norm_matrix(a, n, m, p, k, com));
         //  ---------------------------------- №2 ----------------------------------
-        //  переставляем строки и столбцы
         int owner = res_i_glob % p;
         if (owner == sk)
         {
@@ -877,7 +875,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         //     printf("\n");
 
         // printf("l2_norm(a) = %lf\n", l2_norm_matrix(a, n, m, p, k, com));
-        */
+
         //  ---------------------------------- №3 ----------------------------------
         //  домножение строки на обратную
         if (k == sk)
@@ -950,11 +948,13 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         // ---------------------------------- №4 ----------------------------------
         // преобразования строк
         int cv, ch, dv, dh, ev, eh;
-        int begin = g2l_b(n, m, p, k, p * ((p + s - k) / p) + k);
-        // if (k == 0)
-        //     printf("k = %d, begin = %d\n", k, begin);
-        // print_matrix_local(buf_block_b, 1, buf_block_b_size, k);
-        for (i = begin; i < b_rows; i++)
+        // int begin = g2l_b(n, m, p, k, p * ((p + s - k) / p) + k);
+        //  if (k == 0)
+        //      printf("k = %d, begin = %d\n", k, begin);
+        //  print_matrix_local(buf_block_b, 1, buf_block_b_size, k);
+        while (l2g_b(n, m, p, k, i) <= s)
+            i++;
+        for (; i < b_rows; i++)
         {
             get_block(a, n, m, p, k, i, s, c, cv, ch);
             for (j = s; j < b_columns; j++)
@@ -1058,7 +1058,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         }
         MPI_Bcast(&dv, 1, MPI_DOUBLE, owner, com);
         MPI_Bcast(d, dv, MPI_DOUBLE, owner, com);
-        print_matrix_local(d, 1, dv, k);
+        // print_matrix_local(d, 1, dv, k);
         for (i = 0; i < b_rows && l2g_b(n, m, p, k, i) < s; i++)
         {
             get_block(a, n, m, p, k, i, s, c, cv, ch);
@@ -1079,38 +1079,72 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         }
         // print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
     }
-    // print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
-    /*for (i = 0; i < b_rows; i++)
-    {
-        int i_glob = l2g_b(n, m, p, k, i);
-        // меняем i_glob c permutation[i_glob]
-        int pk = permutation[i_glob] % p;
-        int perm_loc = g2l_b(n, m, p, k, permutation[i_glob]);
+    print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    // for (i = 0; i < b_rows; i++)
+    // {
+    //     int i_glob = l2g_b(n, m, p, k, i);
+    //     // меняем i_glob c permutation[i_glob]
+    //     int pk = permutation[i_glob] % p;
+    //     int perm_loc = g2l_b(n, m, p, k, permutation[i_glob]);
+    //     printf("k = %d, pk = %d, i = %d, perm_loc = %d \n", k, pk, i, perm_loc);
+    //     if (k == pk)
+    //     {
+    //         // swap_rows(a, n, m, p, k, b, i, perm_loc);
+    //         memcpy(x, b + perm_loc * m, m * sizeof(double));
+    //         memcpy(b + perm_loc * m, b + i * m, m * sizeof(double));
+    //         memcpy(b + i * m, x, m * sizeof(double));
+    //     }
+    //     // else
+    //     // {
+    //     //     MPI_Status st;
+    //     //     MPI_Sendrecv_replace(b + i * m, m, MPI_DOUBLE, k, 0, k, 0, com, &st);
+    //     //     if (k == pk)
+    //     //     {
+    //     //         MPI_Sendrecv_replace(b + perm_loc * m, m, MPI_DOUBLE, pk, 0, pk, 0, com, &st);
+    //     //     }
+    //     //     // print_matrix_local(buf, m, n, k);
+    //     // }
+    // }
 
-        if (k == pk)
+    for (i = 0; i < b_columns; i++)
+    {
+
+        int owner_pi = permutation[i] % p, owner_i = i % p;
+        int perm_loc = g2l_b(n, m, p, k, permutation[i]);
+        int i_loc = g2l_b(n, m, p, k, i);
+        // printf("perm_loc = %d, i_loc = %d\n", perm_loc, i_loc);
+        if (owner_pi == owner_i)
         {
-            swap_rows(a, n, m, p, k, b, i, perm_loc);
+            if (k == owner_pi)
+            {
+                memcpy(x + perm_loc * m, b + i_loc * m, m * sizeof(double));
+                //  memcpy(b + perm_loc * m, b + i_loc * m, m * sizeof(double));
+                // memcpy(b + i_loc * m, x, m * sizeof(double));
+            }
         }
         else
         {
             MPI_Status st;
-            MPI_Sendrecv_replace(b + i * m, m, MPI_DOUBLE, k, 0, k, 0, com, &st);
-            if (k == pk)
+            if (k == owner_pi)
             {
-                MPI_Sendrecv_replace(b + perm_loc * m, m, MPI_DOUBLE, pk, 0, pk, 0, com, &st);
+                MPI_Recv(x + perm_loc * m, m, MPI_DOUBLE, owner_i, 0, com, &st);
             }
-            // print_matrix_local(buf, m, n, k);
+            else if (k == owner_i)
+            {
+                MPI_Send(b + i_loc * m, m, MPI_DOUBLE, owner_pi, 0, com);
+            }
         }
     }
-    */
+
     // if (k == 0)
     // {
-    //     for (i = 0; i < b_columns + 1; i++)
+    //     for (i = 0; i < b_columns; i++)
     //     {
     //         printf(" %d", permutation[i]);
     //     }
     //     printf("\n");
     // }
+
     // if (k == 0)
     //     printf("Matrix after all, s = %d\n", s);
     // print_matrix(a, n, m, p, k, buf, MAX_PRINT, com);
@@ -1120,7 +1154,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
     // if (k == 0)
     //     printf("\n");
 
-    memcpy(x, b, b_rows * m * sizeof(double));
+    // memcpy(x, b, b_rows * m * sizeof(double));
     delete[] c;
     delete[] c_inv;
     delete[] d;
