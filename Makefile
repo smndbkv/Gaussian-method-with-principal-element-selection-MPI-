@@ -5,6 +5,7 @@ N = 4
 M = 1
 P = 1
 R = 10
+S = 1
 TEST_FILES = /home/semyon/BOGACHEVTASK/5_sem/matrix_test/*.txt
 
 all: a.out
@@ -27,4 +28,11 @@ test: a.out
 		echo "---"; \
 	done
 
-.PHONY: test clean
+test1: a.out
+	@echo "Running tests..."
+	@for n in $$(seq 1 100); do \
+		mpirun -np $(P) ./a.out $$n $(M) $(R) $(S); \
+		echo "---"; \
+	done
+
+.PHONY: test test1 clean

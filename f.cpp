@@ -695,8 +695,8 @@ void swap_rows(double *a, int n, int m, int p, int k, double *b, int s, int i0)
         {
             for (j = 0; j < n - s * m; j++)
             {
-                SWAP(a[n * (m * i0 + i) + m * s_loc + j],
-                     a[n * (m * s_loc + i) + m * s_loc + j]);
+                SWAP(a[n * (m * i0 + i) + m * s + j],
+                     a[n * (m * s_loc + i) + m * s + j]);
             }
             SWAP(b[m * s_loc + i], b[m * i0 + i]);
         }
@@ -749,7 +749,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
     int b_columns_m = n / m;
     bool flag = true;
     int res_i, res_j;
-    int start;
+    //   int start;
 
     permutation = new int[b_columns + 1];
     for (i = 0; i < b_columns + 1; i++)
@@ -763,10 +763,13 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
 
         // ---------------------------------- №1 ----------------------------------
         // границы для обхода по квадратным блокам
-        start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
+        // start = g2l_b(n, m, p, k, p * ((p - 1 + s - k) / p) + k);
         // printf("k = %d, start = %d\n", k, start);
         flag = true;
-        for (i = start; i < b_rows_m; i++)
+        i = 0;
+        while (l2g_b(n, m, p, k, i) < s)
+            i++;
+        for (; i < b_rows_m; i++)
         {
             for (j = s; j < b_columns_m; j++)
             {
@@ -827,6 +830,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
 
             return 0;
         }
+        // printf("k = %d, nrm_incv = %lf, res = %d\n", k, local_pair.norm_inv, local_pair.res);
         int res_i_glob = global_pair.res / b_columns, res_j_glob = global_pair.res % b_columns;
         res_i = g2l_b(n, m, p, k, res_i_glob);
         res_j = res_j_glob;
@@ -952,8 +956,12 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         //  if (k == 0)
         //      printf("k = %d, begin = %d\n", k, begin);
         //  print_matrix_local(buf_block_b, 1, buf_block_b_size, k);
+
+        // устанавливаем на начало
+        i = 0;
         while (l2g_b(n, m, p, k, i) <= s)
             i++;
+        // printf(" k = %d, i = %d, s = %d\n", k, i, s);
         for (; i < b_rows; i++)
         {
             get_block(a, n, m, p, k, i, s, c, cv, ch);
@@ -1079,7 +1087,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         }
         // print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
     }
-    print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
+    // print_vector(b, n, m, p, k, buf, MAX_PRINT, com);
     // for (i = 0; i < b_rows; i++)
     // {
     //     int i_glob = l2g_b(n, m, p, k, i);
