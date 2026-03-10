@@ -78,9 +78,9 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
 
     double *x = new double[max_b_rows * m];
 
-    t1 = clock();
+    t1 = get_cpu_time();
     int st = gaussian_method(a, b, x, n, m, p, k, buf, com);
-    t1 = (clock() - t1) / CLOCKS_PER_SEC;
+    t1 = get_cpu_time() - t1;
 
     if (!st)
     {
@@ -100,11 +100,23 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
         printf("Solution vector:\n");
     print_vector(x, n, m, p, k, buf, r, com);
 
+    MPI_Send(&t1, 1, MPI_DOUBLE, 0, 0, com);
+    if (k == 0)
+    {
+        MPI_Status st;
+        printf("CPU time thread %.2lf\n", t1);
+        for (int i = 1; i < p; i++)
+        {
+            MPI_Recv(&t1, 1, MPI_DOUBLE, i, 0, com, &st);
+            printf("CPU time thread %.2lf\n", t1);
+        }
+    }
+
     read_matrix(a, n, m, p, k, file_name, buf, com);
     init_b(a, b, n, m, p, k);
-    t2 = clock();
+    t2 = get_cpu_time();
     double r1 = get_r1(a, x, b, buf, n, m, p, k, com), r2 = get_r2(x, x_exact, n, m, p, k, com);
-    t2 = (clock() - t2) / CLOCKS_PER_SEC;
+    t2 = get_cpu_time() - t2;
 
     if (k == 0)
         printf("%s : Task = %d Res1 = %e Res2 = %e T1 = %.2f T2 = %.2f S = %d N = %d M = %d P = %d\n",

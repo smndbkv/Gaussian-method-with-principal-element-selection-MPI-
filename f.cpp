@@ -6,6 +6,20 @@
 #include <fenv.h>
 #include <math.h>
 #include "io_status.h"
+#include "f.h"
+
+double get_full_time()
+{
+    struct timeval t;
+    gettimeofday(&t, 0);
+    return t.tv_sec + t.tv_usec / 1e6;
+}
+double get_cpu_time()
+{
+    struct rusage t;
+    getrusage(RUSAGE_THREAD, &t);
+    return t.ru_utime.tv_sec + t.ru_utime.tv_usec / 1e6;
+}
 
 int g2l_b(int, int, int p, int, int i_glob) // block to block
 {

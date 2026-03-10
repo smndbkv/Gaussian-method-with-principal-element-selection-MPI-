@@ -1,7 +1,10 @@
 #ifndef F_H
 #define F_H
 #include "mpi.h"
-
+#include <sys/time.h>
+#include <sys/resource.h>
+double get_full_time();
+double get_cpu_time();
 int g2l_b(int n, int m, int p, int k, int i_glob);
 int l2g_b(int n, int m, int p, int k, int i_loc);
 int l2g(int n, int m, int p, int k, int i_loc);
