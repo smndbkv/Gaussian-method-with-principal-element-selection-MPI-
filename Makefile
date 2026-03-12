@@ -8,6 +8,7 @@ R = 10
 S = 1
 TEST_FILES = /home/semyon/BOGACHEVTASK/5_sem/matrix_test/*.txt
 
+
 all: a.out
 
 a.out: main.cpp f.h f.cpp solve.h solve.cpp io_status.h
@@ -30,9 +31,11 @@ test: a.out
 
 test1: a.out
 	@echo "Running tests..."
-	@for n in $$(seq 1 100); do \
+	@for n in $$(seq 500 600); do \
 		mpirun -np $(P) ./a.out $$n $(M) $(R) $(S); \
 		echo "---"; \
 	done
+	
+
 
 .PHONY: test test1 clean

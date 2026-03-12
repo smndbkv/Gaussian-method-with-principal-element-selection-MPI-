@@ -3,13 +3,18 @@
 #include "solve.h"
 #include "f.h"
 
+#include <fenv.h>
+int feenableexcept(int excepts);
+int fedisableexcept(int excepts);
+int fegetexcept(void);
+
 void solve(int argc, char **argv, MPI_Comm com, int p, int k)
 {
     int n = 0, m = 0, r = 0, s = 0;
     char *file_name = nullptr;
     double t1 = 0, t2 = 0;
 
-    //    feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
+    feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
 
     if (!((argc == 5 || argc == 6) && sscanf(argv[1], "%d", &n) == 1 && n > 0 && sscanf(argv[2], "%d", &m) == 1 && m > 0 && sscanf(argv[3], "%d", &r) == 1 && sscanf(argv[4], "%d", &s) == 1 && s >= 0 && s <= 4))
     {
@@ -100,8 +105,11 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
         printf("Solution vector:\n");
     print_vector(x, n, m, p, k, buf, r, com);
 
-    MPI_Send(&t1, 1, MPI_DOUBLE, 0, 0, com);
-    if (k == 0)
+    if (k != 0)
+    {
+        MPI_Send(&t1, 1, MPI_DOUBLE, 0, 0, com);
+    }
+    else
     {
         MPI_Status st;
         printf("CPU time thread %.2lf\n", t1);

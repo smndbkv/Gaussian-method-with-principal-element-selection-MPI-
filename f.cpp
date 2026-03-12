@@ -746,6 +746,17 @@ void sub(double *a, double *b, int n, int m, double *c)
         }
     }
 }
+
+void is_zero(double *c, int vh)
+{
+    for (int i = 0; i < vh; i++)
+    {
+        if (fabs(c[i]) < EPS_64)
+        {
+            c[i] = 0;
+        }
+    }
+}
 int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k, double *buf, MPI_Comm com)
 {
     int b_rows = get_block_rows(n, m, p, k), b_columns = (n + m - 1) / m;
@@ -979,10 +990,12 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
         for (; i < b_rows; i++)
         {
             get_block(a, n, m, p, k, i, s, c, cv, ch);
+            is_zero(c, cv * ch);
             for (j = s; j < b_columns; j++)
             {
                 get_block(a, n, m, p, k, i, j, d, dv, dh);
                 get_block_buf(buf, n, m, p, sk, s_loc, j, e, ev, eh);
+                is_zero(e, ev * eh);
                 multy(c, e, cv, ch, eh, f);
                 sub(d, f, cv, eh, d);
                 set_block(a, n, m, i, j, d, cv, eh);
