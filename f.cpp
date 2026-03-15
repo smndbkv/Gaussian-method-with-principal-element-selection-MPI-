@@ -1023,6 +1023,7 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
     }
     int sk = s % p;
     int s_loc = g2l_b(n, m, p, k, s);
+    int st = 0, st_glob = 0;
     if (n % m != 0)
     {
         if (k == sk)
@@ -1034,33 +1035,41 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
             //  print_matrix_local(c, v, h, k); // v = h
             if (!inverse(c, v, c_inv, norm_a))
             {
-                if (k == 0)
-                    printf("This method is not applicable with the given parameters\n");
-                delete[] c;
-                delete[] c_inv;
-                delete[] d;
-                delete[] e;
-                delete[] f;
-                delete[] buf_block_b;
-                delete[] permutation;
-
-                return 0;
+                st = 1;
             }
-            // можно убрать
-            for (i = 0; i < v; i++)
+            else
             {
-                for (j = 0; j < h; j++)
+                // можно убрать
+                for (i = 0; i < v; i++)
                 {
-                    e[i * h + j] = (i == j ? 1 : 0);
+                    for (j = 0; j < h; j++)
+                    {
+                        e[i * h + j] = (i == j ? 1 : 0);
+                    }
                 }
-            }
-            set_block(a, n, m, s_loc, s, e, v, h);
+                set_block(a, n, m, s_loc, s, e, v, h);
 
-            get_block_vector(b, n, m, p, k, s_loc, c, h);
-            // print_matrix_local(c, 1, h, k);
-            multy_vector(c_inv, c, v, h, d);
-            set_block_vector(b, m, s_loc, d, v);
+                get_block_vector(b, n, m, p, k, s_loc, c, h);
+                // print_matrix_local(c, 1, h, k);
+                multy_vector(c_inv, c, v, h, d);
+                set_block_vector(b, m, s_loc, d, v);
+            }
         }
+    }
+    MPI_Allreduce(&st, &st_glob, 1, MPI_INT, MPI_SUM, com);
+    if (st_glob)
+    {
+        if (k == 0)
+            printf("This method is not applicable with the given parameters\n");
+        delete[] c;
+        delete[] c_inv;
+        delete[] d;
+        delete[] e;
+        delete[] f;
+        delete[] buf_block_b;
+        delete[] permutation;
+
+        return 0;
     }
     // if (k == 0)
     //     printf("Matrix after main step, s = %d\n", s);
@@ -1071,7 +1080,8 @@ int gaussian_method(double *a, double *b, double *x, int n, int m, int p, int k,
     // if (k == 0)
     //     printf("\n");
 
-    int cv, ch, dv;
+    int cv,
+        ch, dv;
     // if (n % m != 0)
     // {
     //     MPI_Bcast(d, m * m, MPI_DOUBLE, sk, com);

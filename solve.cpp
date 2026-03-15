@@ -3,10 +3,10 @@
 #include "solve.h"
 #include "f.h"
 
-#include <fenv.h>
-int feenableexcept(int excepts);
-int fedisableexcept(int excepts);
-int fegetexcept(void);
+// #include <fenv.h>
+// int feenableexcept(int excepts);
+// int fedisableexcept(int excepts);
+// int fegetexcept(void);
 
 void solve(int argc, char **argv, MPI_Comm com, int p, int k)
 {
@@ -14,7 +14,7 @@ void solve(int argc, char **argv, MPI_Comm com, int p, int k)
     char *file_name = nullptr;
     double t1 = 0, t2 = 0;
 
-    feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
+    // feenableexcept(FE_DIVBYZERO | FE_INVALID | FE_OVERFLOW | FE_UNDERFLOW);
 
     if (!((argc == 5 || argc == 6) && sscanf(argv[1], "%d", &n) == 1 && n > 0 && sscanf(argv[2], "%d", &m) == 1 && m > 0 && sscanf(argv[3], "%d", &r) == 1 && sscanf(argv[4], "%d", &s) == 1 && s >= 0 && s <= 4))
     {
